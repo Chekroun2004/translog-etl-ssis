@@ -49,6 +49,9 @@ data/                    CSV générés (avec anomalies volontaires)
 02b_load_dim_date.sql    alimentation de dim_date (année 2026)
 03_load_dimensions.sql   procédures MERGE des dimensions
 04_rejets.sql            table etl.rejet et procédure de journalisation
+05_scd2_client.sql       dimension client historisée (SCD type 2)
+06_incremental_expeditions.sql  chargement incrémental de la table de faits (watermark)
+06b_test_incremental.sql        scénario de test du chargement incrémental
 ssis/TransLog_ETL/       projet SSIS (package P2_Charge_Staging.dtsx)
 ```
 
@@ -62,7 +65,7 @@ ssis/TransLog_ETL/       projet SSIS (package P2_Charge_Staging.dtsx)
 
 1. Optionnel : `python gen_translog.py data` régénère les CSV (résultat identique grâce à la graine fixe).
 2. Placer le dépôt dans `C:\TransLog` (les chemins du script 01 en dépendent).
-3. Dans SSMS, exécuter dans l'ordre : `01`, `02`, `02b`, `03`, `04`.
+3. Dans SSMS, exécuter dans l'ordre : `01`, `02`, `02b`, `03`, `04`, puis `05` et `06`.
    Les scripts `01` et `02` recréent les tables : à n'utiliser qu'à l'initialisation.
 4. Ouvrir `ssis/TransLog_ETL/TransLog_ETL.slnx` dans Visual Studio, ouvrir `P2_Charge_Staging.dtsx`, puis exécuter (F5).
 
@@ -96,14 +99,35 @@ Relancer le package donne le même résultat : le staging et la table de faits s
 - **Table de faits** : un Data Flow avec un `Conditional Split` pour les doublons et 5 `Lookup` qui récupèrent les clés de substitution. Les lignes sans correspondance sortent par la sortie *No Match*.
 - **Rejets journalisés en T-SQL** après le Data Flow, avec le motif de chaque ligne.
 
+## P3 : dimension client historisée (SCD type 2)
+
+Script : `05_scd2_client.sql`. La ville et l'adresse sont historisées.
+
+- Table `dwh.dim_client_scd2` : une ligne par version, avec `date_debut`, `date_fin` et `est_courant`. La version courante a `date_fin = 9999-12-31`.
+- Procédure `etl.usp_load_dim_client_scd2 @date_effet`, en deux temps dans une transaction :
+  1. fermeture des versions courantes dont la ville ou l'adresse a changé (`date_fin` = veille de `@date_effet`) ;
+  2. création d'une version courante pour tout client qui n'en a pas (nouveau client ou version fermée).
+- Rejouable : une relance sans changement dans le staging n'écrit rien (61 lignes avant et après).
+- Les périodes sont fermées aux deux bornes (`date_fin` = veille du changement) : une date tombe dans une seule version, la recherche à une date donnée utilise donc `BETWEEN date_debut AND date_fin`.
+
+## Chargement incrémental de la table de faits (watermark)
+
+Script : `06_incremental_expeditions.sql`, test : `06b_test_incremental.sql`.
+
+- Table de contrôle `etl.watermark` : plus grand `expedition_id` déjà chargé, initialisé à partir de la table de faits.
+- Procédure `etl.usp_load_fact_expedition_incr` : ne charge que les expéditions au-dessus du repère, résout les clés de substitution par jointure sur les dimensions, puis avance le repère dans la même transaction que l'insertion.
+- Rejouable : un second passage ne charge aucune ligne.
+- Choix du repère : la source CSV n'a pas de date de modification, le watermark porte donc sur l'identifiant croissant.
+
 ## Limites connues et suite
 
 - Aucun contrôle de plausibilité sur les mesures : un poids négatif (expédition 26), un poids très élevé (41) et un volume vide (141) sont chargés dans la table de faits.
-- Rechargement complet de la table de faits à chaque exécution (pas d'incrémental).
-- Dimensions sans historique (type 1).
+- Le package SSIS recharge toujours la table de faits en entier ; l'incrémental existe pour l'instant en T-SQL.
+- Watermark sur l'identifiant : une expédition déjà chargée puis modifiée dans la source n'est pas reprise.
+- La table de faits pointe encore vers `dim_client` (type 1) et non vers la version SCD2 valide à la date de l'expédition.
 - Pas encore de déploiement dans SSISDB, de planification SQL Server Agent ni de supervision.
 
-Prévu : chargement incrémental et SCD type 2, ingestion depuis une API REST simulée, framework de contrôles qualité, supervision des flux.
+Prévu : liaison des faits à la version SCD2, ingestion depuis une API REST simulée, framework de contrôles qualité, supervision des flux.
 
 ## Auteur
 
