@@ -1,0 +1,13 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.dtproj.user
+
+# Sorties de build SSIS
+bin/
+obj/
+
+# Fichiers temporaires et archives
+*.bak
+*.zip

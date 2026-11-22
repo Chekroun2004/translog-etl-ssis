@@ -1,0 +1,12 @@
+﻿<?xml version="1.0"?>
+<DTS:ConnectionManager xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:ObjectName="localhost.translog_dw"
+  DTS:DTSID="{B9A9D6CF-6D77-4917-8C08-E58959C5EC6C}"
+  DTS:CreationName="OLEDB">
+  <DTS:ObjectData>
+    <DTS:ConnectionManager
+      DTS:ConnectRetryCount="1"
+      DTS:ConnectRetryInterval="5"
+      DTS:ConnectionString="Data Source=localhost;Initial Catalog=translog_dw;Provider=MSOLEDBSQL19.1;Integrated Security=SSPI;Trust Server Certificate=True;Application Name=SSIS-TransLog_ETL-{B9A9D6CF-6D77-4917-8C08-E58959C5EC6C}localhost.translog_dw;Auto Translate=False;" />
+  </DTS:ObjectData>
+</DTS:ConnectionManager>

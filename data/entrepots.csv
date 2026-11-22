@@ -1,0 +1,9 @@
+id_entrepot,code,nom,ville
+1,ENT01,Entrepot Casablanca,Casablanca
+2,ENT02,Entrepot Rabat,Rabat
+3,ENT03,Entrepot Tanger,Tanger
+4,ENT04,Entrepot Marrakech,Marrakech
+5,ENT05,Entrepot Fes,Fes
+6,ENT06,Entrepot Agadir,Agadir
+7,ENT07,Entrepot Oujda,Oujda
+8,ENT08,Entrepot Meknes,Meknes
