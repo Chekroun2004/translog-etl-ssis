@@ -52,6 +52,7 @@ data/                    CSV générés (avec anomalies volontaires)
 05_scd2_client.sql       dimension client historisée (SCD type 2)
 06_incremental_expeditions.sql  chargement incrémental de la table de faits (watermark)
 06b_test_incremental.sql        scénario de test du chargement incrémental
+07_log_execution.sql     journal d'exécution des packages (etl.log_execution)
 ssis/TransLog_ETL/       projet SSIS (package P2_Charge_Staging.dtsx)
 ```
 
@@ -65,7 +66,7 @@ ssis/TransLog_ETL/       projet SSIS (package P2_Charge_Staging.dtsx)
 
 1. Optionnel : `python gen_translog.py data` régénère les CSV (résultat identique grâce à la graine fixe).
 2. Placer le dépôt dans `C:\TransLog` (les chemins du script 01 en dépendent).
-3. Dans SSMS, exécuter dans l'ordre : `01`, `02`, `02b`, `03`, `04`, puis `05` et `06`.
+3. Dans SSMS, exécuter dans l'ordre : `01`, `02`, `02b`, `03`, `04`, puis `05`, `06` et `07`.
    Les scripts `01` et `02` recréent les tables : à n'utiliser qu'à l'initialisation.
 4. Ouvrir `ssis/TransLog_ETL/TransLog_ETL.slnx` dans Visual Studio, ouvrir `P2_Charge_Staging.dtsx`, puis exécuter (F5).
 
