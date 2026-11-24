@@ -8,11 +8,11 @@
   DTS:DTSID="{B8B68D10-2E93-41D1-BBA9-4B6DD8C6AA16}"
   DTS:ExecutableType="Microsoft.Package"
   DTS:LastModifiedProductVersion="17.0.1016.0"
-  DTS:LocaleID="3072"
+  DTS:LocaleID="1036"
   DTS:ObjectName="P3_Incremental"
   DTS:PackageType="5"
-  DTS:VersionBuild="9"
-  DTS:VersionGUID="{15801349-9145-4E2C-8DCD-E008CBE09DE5}">
+  DTS:VersionBuild="10"
+  DTS:VersionGUID="{CA00C967-C0D5-4873-9724-E51BBF5CCF69}">
   <DTS:Property
     DTS:Name="PackageFormatVersion">8</DTS:Property>
   <DTS:Variables>
@@ -194,14 +194,14 @@
         <NodeLayout
           Size="220.8,41.6"
           Id="Package\SQL - Charge faits incremental"
-          TopLeft="104.999994263053,53.7333329596784" />
+          TopLeft="39.1666645266942,19.9333331947194" />
         <NodeLayout
           Size="160.8,41.6"
           Id="Package\SQL - Log succes"
-          TopLeft="139.166659062935,123.066665810876" />
+          TopLeft="73.3333293265762,89.2666660459169" />
         <EdgeLayout
           Id="Package.PrecedenceConstraints[Constraint]"
-          TopLeft="217.483326662994,95.3333329596784">
+          TopLeft="151.649996926635,61.5333331947193">
           <EdgeLayout.Curve>
             <mssgle:Curve
               StartConnector="{assembly:Null}"
@@ -230,9 +230,9 @@
       <GraphLayout
         Capacity="4" xmlns="clr-namespace:Microsoft.SqlServer.IntegrationServices.Designer.Model.Serialization;assembly=Microsoft.SqlServer.IntegrationServices.Graph">
         <NodeLayout
-          Size="156,41.6"
+          Size="NaN,NaN"
           Id="Package.EventHandlers[OnError]\SQL - Log echec"
-          TopLeft="68.9999989718199,22.9999996572733" />
+          TopLeft="NaN,NaN" />
       </GraphLayout>
     </LayoutInfo>
   </DtsEventHandler>

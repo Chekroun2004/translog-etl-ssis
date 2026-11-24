@@ -53,6 +53,7 @@ data/                    CSV générés (avec anomalies volontaires)
 06_incremental_expeditions.sql  chargement incrémental de la table de faits (watermark)
 06b_test_incremental.sql        scénario de test du chargement incrémental
 07_log_execution.sql     journal d'exécution des packages (etl.log_execution)
+08_agent_job.sql         job SQL Server Agent qui lance P3_Incremental chaque nuit
 ssis/TransLog_ETL/       projet SSIS (package P2_Charge_Staging.dtsx)
 ```
 
@@ -119,6 +120,16 @@ Script : `06_incremental_expeditions.sql`, test : `06b_test_incremental.sql`.
 - Procédure `etl.usp_load_fact_expedition_incr` : ne charge que les expéditions au-dessus du repère, résout les clés de substitution par jointure sur les dimensions, puis avance le repère dans la même transaction que l'insertion.
 - Rejouable : un second passage ne charge aucune ligne.
 - Choix du repère : la source CSV n'a pas de date de modification, le watermark porte donc sur l'identifiant croissant.
+
+## Déploiement et planification
+
+1. Dans Visual Studio, `Build > Rebuild` produit `bin/Development/TransLog_ETL.ispac`.
+2. Dans SSMS, créer le catalogue SSISDB (Integration Services Catalogs) et un dossier `TransLog`.
+3. Clic droit sur `Projects > Deploy Project`, choisir le fichier `.ispac`, serveur `localhost`, chemin `/SSISDB/TransLog/TransLog_ETL`.
+4. Exécuter `08_agent_job.sql` pour créer le job `TransLog - Charge faits incremental` (étape de type SSIS Catalog, planification quotidienne à 02h00).
+5. Contrôle : `catalog.executions` (status 7 = succès, 4 = échec) et `etl.log_execution`.
+
+Point d'attention : le job tourne sous le compte du service SQL Server Agent. Un package dont le `LocaleID` vaut 3072 (culture personnalisée générique de Windows) échoue sous ce compte avec l'erreur `Culture is not supported`, alors qu'il passe depuis SSMS. Le `LocaleID` de P3_Incremental est donc fixé à 1036 (français).
 
 ## Limites connues et suite
 

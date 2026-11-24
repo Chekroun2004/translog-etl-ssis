@@ -351,7 +351,7 @@
                     <SSIS:Property SSIS:Name="IncludeInDebugDump">0</SSIS:Property>
                     <SSIS:Property SSIS:Name="Required">0</SSIS:Property>
                     <SSIS:Property SSIS:Name="Sensitive">0</SSIS:Property>
-                    <SSIS:Property SSIS:Name="Value">3072</SSIS:Property>
+                    <SSIS:Property SSIS:Name="Value">1036</SSIS:Property>
                     <SSIS:Property SSIS:Name="DataType">9</SSIS:Property>
                   </SSIS:Properties>
                 </SSIS:Parameter>
@@ -548,7 +548,7 @@
                     <SSIS:Property SSIS:Name="IncludeInDebugDump">0</SSIS:Property>
                     <SSIS:Property SSIS:Name="Required">0</SSIS:Property>
                     <SSIS:Property SSIS:Name="Sensitive">0</SSIS:Property>
-                    <SSIS:Property SSIS:Name="Value">3072</SSIS:Property>
+                    <SSIS:Property SSIS:Name="Value">1036</SSIS:Property>
                     <SSIS:Property SSIS:Name="DataType">9</SSIS:Property>
                   </SSIS:Properties>
                 </SSIS:Parameter>
@@ -745,7 +745,7 @@
                     <SSIS:Property SSIS:Name="IncludeInDebugDump">0</SSIS:Property>
                     <SSIS:Property SSIS:Name="Required">0</SSIS:Property>
                     <SSIS:Property SSIS:Name="Sensitive">0</SSIS:Property>
-                    <SSIS:Property SSIS:Name="Value">3072</SSIS:Property>
+                    <SSIS:Property SSIS:Name="Value">1036</SSIS:Property>
                     <SSIS:Property SSIS:Name="DataType">9</SSIS:Property>
                   </SSIS:Properties>
                 </SSIS:Parameter>
@@ -942,7 +942,7 @@
                     <SSIS:Property SSIS:Name="IncludeInDebugDump">0</SSIS:Property>
                     <SSIS:Property SSIS:Name="Required">0</SSIS:Property>
                     <SSIS:Property SSIS:Name="Sensitive">0</SSIS:Property>
-                    <SSIS:Property SSIS:Name="Value">3072</SSIS:Property>
+                    <SSIS:Property SSIS:Name="Value">1036</SSIS:Property>
                     <SSIS:Property SSIS:Name="DataType">9</SSIS:Property>
                   </SSIS:Properties>
                 </SSIS:Parameter>
