@@ -11,3 +11,9 @@ obj/
 # Fichiers temporaires et archives
 *.bak
 *.zip
+
+# P4 : sorties et secrets
+api/.api_key
+data/tracking_events.csv
+__pycache__/
+.pytest_cache/
