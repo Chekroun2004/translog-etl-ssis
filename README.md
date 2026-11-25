@@ -54,6 +54,10 @@ data/                    CSV générés (avec anomalies volontaires)
 06b_test_incremental.sql        scénario de test du chargement incrémental
 07_log_execution.sql     journal d'exécution des packages (etl.log_execution)
 08_agent_job.sql         job SQL Server Agent qui lance P3_Incremental chaque nuit
+09_tracking_events.sql   P4 : staging, table de faits des événements de suivi, procédure de chargement
+09b_run_tracking_manual.sql  P4 : exécution manuelle et contrôles
+api/                     P4 : API REST simulée (FastAPI) et script d'ingestion
+tests/                   tests Pytest de l'ingestion API
 ssis/TransLog_ETL/       projet SSIS (package P2_Charge_Staging.dtsx)
 ```
 
@@ -131,15 +135,47 @@ Script : `06_incremental_expeditions.sql`, test : `06b_test_incremental.sql`.
 
 Point d'attention : le job tourne sous le compte du service SQL Server Agent. Un package dont le `LocaleID` vaut 3072 (culture personnalisée générique de Windows) échoue sous ce compte avec l'erreur `Culture is not supported`, alors qu'il passe depuis SSMS. Le `LocaleID` de P3_Incremental est donc fixé à 1036 (français).
 
+## P4 : ingestion depuis une API REST de suivi
+
+Flux : API simulée (FastAPI) -> `api/ingest_tracking.py` -> CSV -> `stg.tracking_events` -> `dwh.fact_suivi_evenement`.
+
+- Grain : un événement de suivi d'une expédition.
+- Authentification par clé (`X-API-Key`), jamais committée.
+- Pagination par curseur (`after_id`), qui sert aussi de watermark.
+- Reprise automatique sur 503 et 429 avec backoff ; arrêt immédiat sur clé refusée.
+- Écriture atomique du CSV (fichier temporaire puis renommage).
+- Staging entièrement en `NVARCHAR` : le typage et les contrôles se font dans la procédure, une ligne invalide part en rejet sans bloquer le lot.
+- Codes de sortie : 0 OK, 2 API indisponible, 3 authentification refusée, 4 réponse invalide, 5 configuration manquante.
+
+Résultats du premier chargement :
+
+- 4727 événements reçus en 10 pages (limit 500), 2 erreurs 503 reprises automatiquement.
+- 4720 chargés, 7 rejetés (expédition inconnue), tracés dans `etl.rejet` : 4720 + 7 = 4727.
+- 2e exécution : 0 ligne, watermark inchangé (idempotence).
+
+Lancer :
+
+```powershell
+pip install -r api\requirements.txt
+python -m pytest -q
+$env:TRANSLOG_API_KEY="cle-de-demo"
+python -m uvicorn api.mock_api:app --port 8000        # fenêtre 1
+python api\ingest_tracking.py --after-id <watermark>  # fenêtre 2
+```
+
+Puis exécuter `09b_run_tracking_manual.sql` dans SSMS.
+
 ## Limites connues et suite
 
 - Aucun contrôle de plausibilité sur les mesures : un poids négatif (expédition 26), un poids très élevé (41) et un volume vide (141) sont chargés dans la table de faits.
 - Le package SSIS recharge toujours la table de faits en entier ; l'incrémental existe pour l'instant en T-SQL.
 - Watermark sur l'identifiant : une expédition déjà chargée puis modifiée dans la source n'est pas reprise.
 - La table de faits pointe encore vers `dim_client` (type 1) et non vers la version SCD2 valide à la date de l'expédition.
-- Pas encore de déploiement dans SSISDB, de planification SQL Server Agent ni de supervision.
+- Le watermark de P4 avance aussi sur les événements rejetés : ils ne sont plus redemandés à l'API (perte tracée dans `etl.rejet`, retraitement à prévoir).
+- L'ingestion P4 est lancée à la main ; son package SSIS reste à construire.
+- Pas encore de supervision centralisée (fraîcheur, santé des flux, alertes).
 
-Prévu : liaison des faits à la version SCD2, ingestion depuis une API REST simulée, framework de contrôles qualité, supervision des flux.
+Prévu : liaison des faits à la version SCD2, package SSIS pour l'ingestion API, framework de contrôles qualité, supervision des flux.
 
 ## Auteur
 
