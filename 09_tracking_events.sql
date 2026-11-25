@@ -2,8 +2,11 @@
    Flux : API -> ingest_tracking.py -> CSV -> staging -> dwh.fact_suivi_evenement.
    Grain de la table de faits : UN evenement de suivi d'UNE expedition.
    Watermark : dernier id_evenement deja traite (l'API pagine par curseur sur cet id).
-   Limite connue : un evenement rejete (ex. expedition inconnue) est journalise dans
-   etl.rejet mais n'est plus redemande a l'API : la perte est tracee, pas silencieuse. */
+   Rejets : un evenement dont une reference manque encore (expedition, statut ou date
+   inconnus) est mis en quarantaine avec sa ligne brute (etl.quarantaine, 11_quarantaine.sql)
+   et retente par etl.usp_retraiter_tracking_events : le watermark peut donc avancer
+   sans perdre ces evenements. Les autres rejets (id invalide, doublon...) sont definitifs.
+   Prerequis : 04_rejets.sql et 11_quarantaine.sql (table etl.quarantaine). */
 USE translog_dw;
 GO
 
@@ -46,6 +49,9 @@ BEGIN
     SELECT TRY_CAST(id_evenement AS INT)                 AS evenement_id,
            id_evenement                                  AS id_brut,
            TRY_CAST(id_expedition AS INT)                AS expedition_id,
+           NULLIF(LTRIM(RTRIM(id_expedition)), '')       AS id_expedition_brut,
+           statut                                        AS statut_brut,
+           horodatage                                    AS horodatage_brut,
            LTRIM(RTRIM(statut))                          AS statut,
            TRY_CAST(horodatage AS DATETIME2(0))          AS horodatage,
            ROW_NUMBER() OVER (PARTITION BY id_evenement
@@ -59,6 +65,7 @@ BEGIN
              WHEN s.evenement_id IS NULL                  THEN 'id evenement invalide'
              WHEN s.rn > 1                                THEN 'doublon'
              WHEN s.horodatage IS NULL                    THEN 'horodatage invalide'
+             WHEN s.id_expedition_brut IS NULL            THEN 'expedition absente'
              WHEN f.expedition_id IS NULL                 THEN 'expedition inconnue'
              WHEN st.statut_key IS NULL                   THEN 'statut inconnu'
              WHEN d.date_key IS NULL                      THEN 'date inconnue'
@@ -74,6 +81,16 @@ BEGIN
     WHERE v.motif IS NULL
       AND EXISTS (SELECT 1 FROM dwh.fact_suivi_evenement t WHERE t.evenement_id = v.evenement_id);
 
+    /* Rejeu : un rejet deja journalise n'est pas compte deux fois, sauf s'il est
+       retentable et pas encore en quarantaine (reprise des rejets anterieurs). */
+    DELETE v FROM #verdict v
+    WHERE v.motif IS NOT NULL
+      AND EXISTS (SELECT 1 FROM etl.rejet r
+                  WHERE r.table_source = 'tracking_events' AND r.cle_source = v.id_brut)
+      AND (v.motif NOT LIKE N'%inconnu%'
+           OR EXISTS (SELECT 1 FROM etl.quarantaine q
+                      WHERE q.table_source = 'tracking_events' AND q.cle_source = v.id_brut));
+
     SELECT @nb     = ISNULL(SUM(CASE WHEN motif IS NULL THEN 1 ELSE 0 END), 0),
            @nb_rej = ISNULL(SUM(CASE WHEN motif IS NOT NULL THEN 1 ELSE 0 END), 0)
     FROM #verdict;
@@ -86,9 +103,28 @@ BEGIN
     FROM #verdict WHERE motif IS NULL;
 
     INSERT INTO etl.rejet (table_source, cle_source, motif)
-    SELECT 'tracking_events', id_brut, motif FROM #verdict WHERE motif IS NOT NULL;
+    SELECT 'tracking_events', v.id_brut, v.motif
+    FROM #verdict v
+    WHERE v.motif IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM etl.rejet r
+                      WHERE r.table_source = 'tracking_events' AND r.cle_source = v.id_brut);
 
-    /* Le repere avance sur tout ce qui a ete vu (charge ou rejete), dans la meme transaction. */
+    /* Quarantaine : on garde la ligne brute (JSON) pour pouvoir la retenter plus tard. */
+    INSERT INTO etl.quarantaine (table_source, cle_source, donnees_brutes, motif)
+    SELECT 'tracking_events', v.id_brut,
+           (SELECT v.id_brut            AS id_evenement,
+                   v.id_expedition_brut AS id_expedition,
+                   v.statut_brut        AS statut,
+                   v.horodatage_brut    AS horodatage
+            FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES),
+           v.motif
+    FROM #verdict v
+    WHERE v.motif LIKE N'%inconnu%'
+      AND NOT EXISTS (SELECT 1 FROM etl.quarantaine q
+                      WHERE q.table_source = 'tracking_events' AND q.cle_source = v.id_brut);
+
+    /* Le repere avance sur tout ce qui a ete vu (charge, rejete ou mis en quarantaine),
+       dans la meme transaction. */
     IF @nouveau_wm > @wm
         UPDATE etl.watermark
            SET derniere_valeur = @nouveau_wm, date_maj = SYSUTCDATETIME()

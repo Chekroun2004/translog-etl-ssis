@@ -57,6 +57,8 @@ data/                    CSV générés (avec anomalies volontaires)
 09_tracking_events.sql   P4 : staging, table de faits des événements de suivi, procédure de chargement
 09b_run_tracking_manual.sql  P4 : exécution manuelle et contrôles
 10_qualite.sql           P5 : framework de contrôles qualité (règles, exécuteur, résultats)
+11_quarantaine.sql       P5 : quarantaine et retraitement des rejets
+11b_test_retraitement.sql    P5 : scénario de test du retraitement
 api/                     P4 : API REST simulée (FastAPI) et script d'ingestion
 tests/                   tests Pytest de l'ingestion API
 ssis/TransLog_ETL/       projet SSIS (package P2_Charge_Staging.dtsx)
@@ -200,17 +202,48 @@ EXEC etl.usp_run_controles;                        -- toutes les règles
 EXEC etl.usp_run_controles @flux = 'expeditions';  -- un flux
 ```
 
+### Quarantaine et retraitement des rejets
+
+Problème : un fait peut arriver avant sa référence (un client, un entrepôt, une expédition). Le rejeter pour toujours perd la donnée ; le charger avec une référence inventée la fausse.
+
+Choix : quarantaine. La ligne brute est gardée en JSON dans `etl.quarantaine`, puis retentée à chaque exécution :
+
+```
+A_RETRAITER --(référence arrivée)--> RETRAITE
+     +------(5 essais sans succès)--> ABANDONNE
+```
+
+- Seuls les motifs « inconnu » (référence pas encore disponible) vont en quarantaine. Une valeur absente ou mal formée reste un rejet définitif dans `etl.rejet`.
+- Le retraitement retrouve la ligne par sa clé, pas par le watermark : un événement rejeté n'est plus perdu quand le watermark avance.
+- Ordre imposé par `etl.usp_retraitement` : les expéditions d'abord, puis leurs événements.
+- `etl.fn_motif_expedition` (inline table-valued function) écrit les motifs une seule fois pour le chargement et le retraitement.
+- Un nouveau motif `expedition absente` (complétude) est distingué de `expedition inconnue` (intégrité référentielle).
+- Rejouable : contrainte `UNIQUE (table_source, cle_source)`, et plus de rejet journalisé deux fois.
+
+Scénario testé (`11b_test_retraitement.sql`) :
+
+- 7 événements de suivi rejetés en cascade : leurs expéditions (56, 71, 86) avaient elles-mêmes été rejetées.
+- 5 expéditions en quarantaine : 56 (statut inconnu), 71 et 3004 (client inconnu), 86 (entrepôt inconnu), 101 (date 2031 hors calendrier).
+- Arrivée simulée des clients 999 et 9999 : les expéditions 71 et 3004 sont chargées, puis les événements 3052 et 3064 de l'expédition 71.
+- Restent en attente : 56, 86, 101 et leurs 5 événements. L'expédition 101 ne se corrigera pas seule (date erronée) : elle passera à ABANDONNE après 5 essais.
+
+```sql
+EXEC etl.usp_retraitement;
+SELECT table_source, statut, COUNT(*) FROM etl.quarantaine GROUP BY table_source, statut;
+```
+
 ## Limites connues et suite
 
 - Les anomalies métier (expéditions 26, 41 et 141) sont détectées par P5 mais restent chargées : la correction à la source n'est pas automatisée.
 - Le package SSIS recharge toujours la table de faits en entier ; l'incrémental existe pour l'instant en T-SQL.
 - Watermark sur l'identifiant : une expédition déjà chargée puis modifiée dans la source n'est pas reprise.
 - La table de faits pointe encore vers `dim_client` (type 1) et non vers la version SCD2 valide à la date de l'expédition.
-- Le watermark de P4 avance aussi sur les événements rejetés : ils ne sont plus redemandés à l'API (perte tracée dans `etl.rejet`, retraitement à prévoir).
+- Le `CASE` des motifs s'arrête au premier défaut : une ligne qui en a deux (événement 1621, expédition inconnue et statut `Livree??`) n'en signale qu'un.
+- Une ligne en quarantaine dont la cause ne se corrigera pas seule (date 2031) consomme ses essais avant d'être abandonnée.
 - L'ingestion P4 est lancée à la main ; son package SSIS reste à construire.
 - Pas encore de supervision centralisée (fraîcheur, santé des flux, alertes).
 
-Prévu : liaison des faits à la version SCD2, package SSIS pour l'ingestion API, retraitement des rejets, supervision des flux.
+Prévu : liaison des faits à la version SCD2, package SSIS pour l'ingestion API, supervision des flux (dont le suivi des lignes ABANDONNE).
 
 ## Auteur
 
