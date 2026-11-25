@@ -56,6 +56,7 @@ data/                    CSV générés (avec anomalies volontaires)
 08_agent_job.sql         job SQL Server Agent qui lance P3_Incremental chaque nuit
 09_tracking_events.sql   P4 : staging, table de faits des événements de suivi, procédure de chargement
 09b_run_tracking_manual.sql  P4 : exécution manuelle et contrôles
+10_qualite.sql           P5 : framework de contrôles qualité (règles, exécuteur, résultats)
 api/                     P4 : API REST simulée (FastAPI) et script d'ingestion
 tests/                   tests Pytest de l'ingestion API
 ssis/TransLog_ETL/       projet SSIS (package P2_Charge_Staging.dtsx)
@@ -165,9 +166,43 @@ python api\ingest_tracking.py --after-id <watermark>  # fenêtre 2
 
 Puis exécuter `09b_run_tracking_manual.sql` dans SSMS.
 
+## P5 : framework de contrôles qualité
+
+Principe : les règles métier sont des données, pas du code. Ajouter une règle revient à faire un `INSERT`, sans modifier ni redéployer de procédure.
+
+- `etl.regle_qualite` : une ligne par règle (flux, dimension, gravité, requête SQL qui renvoie les clés en défaut).
+- `etl.usp_run_controles` : exécute chaque règle active (`sp_executesql`), écrit OK ou KO, et ERREUR si la requête elle-même est cassée, sans arrêter les autres règles.
+- `etl.controle_resultat` : historique par exécution (`execution_id`), base de la supervision.
+- `etl.controle_anomalie` : les clés en défaut, pour savoir quelles lignes corriger.
+
+Deux lignes de défense :
+
+1. À l'entrée, dans les procédures de chargement : typage, doublon, clé inconnue. La ligne part dans `etl.rejet`.
+2. Après le chargement, sur le DWH : règles métier de complétude et de plausibilité, avec une gravité (BLOQUANT ou AVERTISSEMENT).
+
+Une règle = une dimension = un motif clair : un poids négatif (plausibilité) et un poids absent (complétude) sont deux règles distinctes.
+
+Résultat sur le jeu de données :
+
+| Règle | Gravité | Résultat |
+|---|---|---|
+| EXP_POIDS_NON_POSITIF | BLOQUANT | KO (expédition 26) |
+| EXP_VOLUME_ABSENT | AVERTISSEMENT | KO (expédition 141) |
+| EXP_POIDS_EXTREME | AVERTISSEMENT | KO (expédition 41, 4 500 t) |
+| EXP_POIDS_ABSENT | BLOQUANT | OK |
+
+Le seuil de 30 t est un seuil métier (charge utile d'un poids lourd, hypothèse générale), vérifié contre la médiane et le 99e percentile plutôt que contre la moyenne, elle-même faussée par la valeur aberrante.
+
+Test de robustesse : une règle volontairement fausse (colonne inexistante) sort en ERREUR avec son message, et les autres règles s'exécutent normalement.
+
+```sql
+EXEC etl.usp_run_controles;                        -- toutes les règles
+EXEC etl.usp_run_controles @flux = 'expeditions';  -- un flux
+```
+
 ## Limites connues et suite
 
-- Aucun contrôle de plausibilité sur les mesures : un poids négatif (expédition 26), un poids très élevé (41) et un volume vide (141) sont chargés dans la table de faits.
+- Les anomalies métier (expéditions 26, 41 et 141) sont détectées par P5 mais restent chargées : la correction à la source n'est pas automatisée.
 - Le package SSIS recharge toujours la table de faits en entier ; l'incrémental existe pour l'instant en T-SQL.
 - Watermark sur l'identifiant : une expédition déjà chargée puis modifiée dans la source n'est pas reprise.
 - La table de faits pointe encore vers `dim_client` (type 1) et non vers la version SCD2 valide à la date de l'expédition.
@@ -175,7 +210,7 @@ Puis exécuter `09b_run_tracking_manual.sql` dans SSMS.
 - L'ingestion P4 est lancée à la main ; son package SSIS reste à construire.
 - Pas encore de supervision centralisée (fraîcheur, santé des flux, alertes).
 
-Prévu : liaison des faits à la version SCD2, package SSIS pour l'ingestion API, framework de contrôles qualité, supervision des flux.
+Prévu : liaison des faits à la version SCD2, package SSIS pour l'ingestion API, retraitement des rejets, supervision des flux.
 
 ## Auteur
 
