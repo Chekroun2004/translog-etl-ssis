@@ -59,6 +59,9 @@ data/                    CSV générés (avec anomalies volontaires)
 10_qualite.sql           P5 : framework de contrôles qualité (règles, exécuteur, résultats)
 11_quarantaine.sql       P5 : quarantaine et retraitement des rejets
 11b_test_retraitement.sql    P5 : scénario de test du retraitement
+12_supervision.sql       P6 : supervision (santé des flux, tableau de santé, alertes)
+12b_job_verification_sante.sql  P6 : job SQL Server Agent de vérification (07h00)
+12c_test_supervision.sql P6 : scénario de test de la supervision
 api/                     P4 : API REST simulée (FastAPI) et script d'ingestion
 tests/                   tests Pytest de l'ingestion API
 ssis/TransLog_ETL/       projet SSIS (package P2_Charge_Staging.dtsx)
@@ -232,6 +235,37 @@ EXEC etl.usp_retraitement;
 SELECT table_source, statut, COUNT(*) FROM etl.quarantaine GROUP BY table_source, statut;
 ```
 
+## P6 : supervision des flux
+
+Quatre indicateurs par flux, résumés en un feu VERT / ORANGE / ROUGE :
+
+- statut de la dernière exécution (SUCCES ou ECHEC) ;
+- fraîcheur : heures depuis le dernier **succès** (pas depuis la dernière exécution) ;
+- taux de rejet de la dernière exécution ;
+- qualité : règles KO de la dernière exécution des contrôles, lignes abandonnées en quarantaine.
+
+```
+ROUGE  : jamais réussi, dernière exécution en échec, ou aucun succès depuis 2 périodes
+ORANGE : aucun succès depuis 1 période (retard), ou taux de rejet au-dessus du seuil
+VERT   : sinon
+```
+
+- `etl.flux_supervision` : ce qu'on attend de chaque flux (fréquence, seuil de rejets). Changer une attente est un `UPDATE`, pas une modification de code.
+- `etl.v_sante_flux` : feu par flux, à partir de `etl.log_execution`.
+- `etl.v_tableau_sante` : tableau de santé complet (flux, qualité, quarantaine).
+- `etl.usp_verifier_sante` : historise chaque anomalie dans `etl.alerte` et échoue (`THROW 50100`) s'il y a du ROUGE.
+- Job SQL Server Agent `TransLog - Verification sante`, chaque jour à 07h00, après le chargement de 02h00 : le job passe en échec quand un composant est au ROUGE. L'alerte est découplée du canal : un e-mail (Database Mail et operator) peut être branché sur le job sans rien réécrire.
+- `etl.usp_run_tracking_events` : partie base de données du flux P4, journalisée en SUCCES ou ECHEC.
+- `etl.usp_log_execution` accepte le nombre de rejets, en dernier paramètre : les appels existants du package P3 restent valides.
+
+Résultat sur le jeu de données : les deux flux sont au VERT, la quarantaine aussi (aucune ligne abandonnée), la qualité est au ROUGE à cause de la règle bloquante `EXP_POIDS_NON_POSITIF` (expédition 26). La vérification échoue donc, comme attendu, avec le message `1 composant(s) au ROUGE`.
+
+```sql
+SELECT * FROM etl.v_tableau_sante;
+EXEC etl.usp_verifier_sante @echouer_si_rouge = 0;   -- consultation
+EXEC etl.usp_verifier_sante;                          -- comportement du job
+```
+
 ## Limites connues et suite
 
 - Les anomalies métier (expéditions 26, 41 et 141) sont détectées par P5 mais restent chargées : la correction à la source n'est pas automatisée.
@@ -241,9 +275,13 @@ SELECT table_source, statut, COUNT(*) FROM etl.quarantaine GROUP BY table_source
 - Le `CASE` des motifs s'arrête au premier défaut : une ligne qui en a deux (événement 1621, expédition inconnue et statut `Livree??`) n'en signale qu'un.
 - Une ligne en quarantaine dont la cause ne se corrigera pas seule (date 2031) consomme ses essais avant d'être abandonnée.
 - L'ingestion P4 est lancée à la main ; son package SSIS reste à construire.
-- Pas encore de supervision centralisée (fraîcheur, santé des flux, alertes).
+- Pas de notification push : l'alerte est visible dans l'historique de l'Agent et dans `etl.alerte`, Database Mail n'est pas configuré.
+- Pas de contrôle de volume (une exécution réussie à 0 ligne n'est pas signalée).
+- Une alerte est réécrite à chaque vérification tant que l'anomalie dure (14 alertes identiques en test) : il faudrait n'enregistrer que les changements d'état.
+- Supervision périodique : une panne réparée entre deux vérifications n'est jamais signalée (elle reste visible dans `etl.log_execution`).
+- Une anomalie non corrigée à la source (expédition 26) garde la qualité au ROUGE en permanence : il manque un mécanisme d'acquittement pour éviter la lassitude face aux alertes.
 
-Prévu : liaison des faits à la version SCD2, package SSIS pour l'ingestion API, supervision des flux (dont le suivi des lignes ABANDONNE).
+Prévu : liaison des faits à la version SCD2, package SSIS pour l'ingestion API.
 
 ## Auteur
 
