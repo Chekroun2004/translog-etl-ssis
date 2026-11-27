@@ -2,8 +2,7 @@
    Principe : un watermark garde le plus grand id_expedition deja charge.
    Chaque execution ne traite que les expeditions au-dessus de ce repere.
    Choix : la source CSV n'a pas de date de modification, le watermark porte donc
-   sur id_expedition (croissant). Limite : une expedition deja chargee puis modifiee
-   dans la source n'est pas reprise. */
+   sur id_expedition (croissant). */
 USE translog_dw;
 GO
 

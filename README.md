@@ -133,7 +133,7 @@ erDiagram
     }
 ```
 
-`dwh.dim_client_scd2` historise les changements de ville et d'adresse, mais n'est pas encore reliée à `fact_expedition` (voir Limites).
+`dwh.dim_client_scd2` historise les changements de ville et d'adresse (`date_debut`, `date_fin`, `est_courant`).
 
 Grains :
 
@@ -409,23 +409,6 @@ SELECT * FROM etl.v_tableau_sante;
 EXEC etl.usp_verifier_sante @echouer_si_rouge = 0;   -- consultation
 EXEC etl.usp_verifier_sante;                          -- comportement du job
 ```
-
-## Limites connues et suite
-
-- Les anomalies métier (expéditions 26, 41 et 141) sont détectées par P5 mais restent chargées : la correction à la source n'est pas automatisée.
-- Le package SSIS recharge toujours la table de faits en entier ; l'incrémental existe pour l'instant en T-SQL.
-- Watermark sur l'identifiant : une expédition déjà chargée puis modifiée dans la source n'est pas reprise.
-- La table de faits pointe encore vers `dim_client` (type 1) et non vers la version SCD2 valide à la date de l'expédition.
-- Le `CASE` des motifs s'arrête au premier défaut : une ligne qui en a deux (événement 1621, expédition inconnue et statut `Livree??`) n'en signale qu'un.
-- Une ligne en quarantaine dont la cause ne se corrigera pas seule (date 2031) consomme ses essais avant d'être abandonnée.
-- Le package P4 est exécuté depuis Visual Studio, pas encore déployé dans SSISDB ni planifié : le job Agent tourne sous `NT SERVICE\SQLSERVERAGENT`, qui n'a pas accès au Python installé dans le profil utilisateur (il faudrait un compte proxy SQL Server Agent ou un Python installé pour tous les utilisateurs).
-- Pas de notification push : l'alerte est visible dans l'historique de l'Agent et dans `etl.alerte`, Database Mail n'est pas configuré.
-- Pas de contrôle de volume (une exécution réussie à 0 ligne n'est pas signalée).
-- Une alerte est réécrite à chaque vérification tant que l'anomalie dure (14 alertes identiques en test) : il faudrait n'enregistrer que les changements d'état.
-- Supervision périodique : une panne réparée entre deux vérifications n'est jamais signalée (elle reste visible dans `etl.log_execution`).
-- Une anomalie non corrigée à la source (expédition 26) garde la qualité au ROUGE en permanence : il manque un mécanisme d'acquittement pour éviter la lassitude face aux alertes.
-
-Prévu : liaison des faits à la version SCD2, déploiement et planification du package P4 (compte proxy).
 
 ## Auteur
 
