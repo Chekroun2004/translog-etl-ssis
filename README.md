@@ -171,6 +171,34 @@ python api\ingest_tracking.py --after-id <watermark>  # fenêtre 2
 
 Puis exécuter `09b_run_tracking_manual.sql` dans SSMS.
 
+### Package SSIS `P4_Tracking`
+
+Le flux complet est orchestré par SSIS :
+
+```
+SQL - Lire watermark        -> User::WM
+Process - Ingestion API     python api\ingest_tracking.py --after-id <WM> --base-url <ApiBaseUrl>
+SQL - Charger staging       TRUNCATE + BULK INSERT du CSV
+SQL - Charger faits         etl.usp_load_tracking_events -> NbCharges, NbRejetes, AncienWM, NouveauWM
+SQL - Retraitement          etl.usp_retraitement (quarantaine)
+SQL - Controles qualite     etl.usp_run_controles
+SQL - Log succes            etl.usp_log_execution
+OnError (package)           SQL - Log echec avec System::ErrorDescription
+```
+
+- Paramètres de projet `PythonExe`, `RacineProjet`, `ApiBaseUrl` : changer d'environnement ne demande pas d'ouvrir le package.
+- Les arguments de Python sont construits par une expression sur le watermark lu en base.
+- Execute Process Task : tout code de sortie différent de 0 fait échouer la tâche (2 = API indisponible, 3 = clé refusée...), donc le package, donc la supervision passe au ROUGE.
+- Tâches strictement chaînées : sans contrainte de précédence, SSIS lancerait les tâches en parallèle (chargement des faits avant la fin du staging).
+- Le package journalise sous `System::PackageName` = `P4_Tracking`, le nom attendu par `etl.flux_supervision`.
+- La clé d'API est lue par le script dans `api/.api_key` (non versionné) : le package ne voit pas les variables d'environnement d'une session PowerShell.
+
+Tests réalisés :
+
+- API disponible : 7 tâches au vert, ligne `P4_Tracking SUCCES` dans `etl.log_execution`.
+- API arrêtée : 5 essais avec backoff (1, 2, 4, 8, 16 s), code de sortie 2, ligne `P4_Tracking ECHEC` avec le message d'erreur, `P4_Tracking` au ROUGE dans `etl.v_sante_flux`.
+- Leçon d'un test précédent : quand le gestionnaire OnError était mal paramétré, l'échec n'était pas journalisé et la supervision restait au VERT. Une supervision ne vaut que si la journalisation de l'échec est elle-même testée.
+
 ## P5 : framework de contrôles qualité
 
 Principe : les règles métier sont des données, pas du code. Ajouter une règle revient à faire un `INSERT`, sans modifier ni redéployer de procédure.
@@ -274,14 +302,14 @@ EXEC etl.usp_verifier_sante;                          -- comportement du job
 - La table de faits pointe encore vers `dim_client` (type 1) et non vers la version SCD2 valide à la date de l'expédition.
 - Le `CASE` des motifs s'arrête au premier défaut : une ligne qui en a deux (événement 1621, expédition inconnue et statut `Livree??`) n'en signale qu'un.
 - Une ligne en quarantaine dont la cause ne se corrigera pas seule (date 2031) consomme ses essais avant d'être abandonnée.
-- L'ingestion P4 est lancée à la main ; son package SSIS reste à construire.
+- Le package P4 est exécuté depuis Visual Studio, pas encore déployé dans SSISDB ni planifié : le job Agent tourne sous `NT SERVICE\SQLSERVERAGENT`, qui n'a pas accès au Python installé dans le profil utilisateur (il faudrait un compte proxy SQL Server Agent ou un Python installé pour tous les utilisateurs).
 - Pas de notification push : l'alerte est visible dans l'historique de l'Agent et dans `etl.alerte`, Database Mail n'est pas configuré.
 - Pas de contrôle de volume (une exécution réussie à 0 ligne n'est pas signalée).
 - Une alerte est réécrite à chaque vérification tant que l'anomalie dure (14 alertes identiques en test) : il faudrait n'enregistrer que les changements d'état.
 - Supervision périodique : une panne réparée entre deux vérifications n'est jamais signalée (elle reste visible dans `etl.log_execution`).
 - Une anomalie non corrigée à la source (expédition 26) garde la qualité au ROUGE en permanence : il manque un mécanisme d'acquittement pour éviter la lassitude face aux alertes.
 
-Prévu : liaison des faits à la version SCD2, package SSIS pour l'ingestion API.
+Prévu : liaison des faits à la version SCD2, déploiement et planification du package P4 (compte proxy).
 
 ## Auteur
 
