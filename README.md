@@ -2,27 +2,61 @@
 
 Projet personnel d'apprentissage sur un cas logistique **fictif** (transport routier de marchandises). Toutes les données sont synthétiques et générées par un script reproductible.
 
-## Objectif
+## En bref
 
-Charger des fichiers CSV (expéditions, clients, entrepôts, transporteurs) dans un Data Warehouse SQL Server en schéma en étoile, avec :
+Pipeline de données industrialisé, de la source au tableau de santé, sur SQL Server et SSIS :
 
-- un chargement **rejouable** (relancer donne le même résultat) ;
-- une **traçabilité des lignes rejetées**, avec leur motif.
+- **Deux sources** : fichiers CSV (expéditions, clients, entrepôts, transporteurs) et une API REST de suivi des expéditions (paginée, authentifiée, avec pannes simulées).
+- **Data Warehouse en étoile** : faits des expéditions et des événements de suivi, dimension client historisée (SCD type 2).
+- **Chargement incrémental et rejouable** : watermark, `MERGE`, idempotence vérifiée par des tests de rejeu.
+- **Qualité** : rejets tracés avec leur motif, quarantaine et retraitement automatique des lignes dont la référence arrive en retard, règles métier déclarées dans une table.
+- **Supervision** : journal d'exécution de chaque flux, fraîcheur, taux de rejet, tableau de santé VERT / ORANGE / ROUGE, alerte par un job SQL Server Agent.
+- **Orchestration** : packages SSIS ; le chargement incrémental est déployé dans SSISDB et planifié par SQL Server Agent ; le package d'ingestion API appelle Python et réagit à son code de sortie.
 
 ## Architecture
 
-```
-CSV (data/)
-   |  SSIS : Flat File Source -> OLE DB Destination (TRUNCATE avant chargement)
-   v
-stg.*   staging : tout en NVARCHAR, rien n'est corrigé
-   |  T-SQL MERGE : dimensions (etl.usp_load_dimensions)
-   |  SSIS Data Flow : Conditional Split + 5 Lookups : table de faits
-   v
-dwh.*   schéma en étoile
-   |  T-SQL : etl.usp_log_rejets_expeditions
-   v
-etl.rejet   lignes écartées + motif
+```mermaid
+flowchart LR
+    subgraph SRC["Sources"]
+        CSV["Fichiers CSV"]
+        API["API REST de suivi<br/>(FastAPI simulée)"]
+    end
+
+    subgraph ORCH["Orchestration SSIS + SQL Server Agent"]
+        P2["P2 : CSV vers staging<br/>et DWH (full load)"]
+        P3["P3 : incrémental<br/>job 02h00"]
+        P4["P4 : Execute Process<br/>ingest_tracking.py"]
+    end
+
+    STG[("stg<br/>staging NVARCHAR")]
+
+    subgraph DWH["dwh : schéma en étoile"]
+        DIM[("Dimensions<br/>MERGE, SCD2 client")]
+        FACT[("fact_expedition<br/>fact_suivi_evenement")]
+    end
+
+    subgraph ETL["etl : qualité et supervision"]
+        REJ["etl.rejet<br/>rejets définitifs"]
+        QUA["etl.quarantaine<br/>retraitement"]
+        QC["Contrôles qualité<br/>règles en table"]
+        LOG["etl.log_execution"]
+        SANTE["Tableau de santé<br/>VERT ORANGE ROUGE<br/>job 07h00"]
+    end
+
+    CSV --> P2 --> STG
+    CSV --> P3 --> STG
+    API --> P4 --> STG
+    STG --> DIM
+    STG --> FACT
+    STG -. "valeur absente ou invalide" .-> REJ
+    STG -. "référence pas encore arrivée" .-> QUA
+    QUA -. "référence arrivée" .-> FACT
+    FACT --> QC
+    P3 --> LOG
+    P4 --> LOG
+    LOG --> SANTE
+    QC --> SANTE
+    QUA --> SANTE
 ```
 
 Schéma en étoile :
@@ -31,13 +65,30 @@ Schéma en étoile :
 dim_client  dim_entrepot  dim_transporteur
       \          |          /
        \         |         /
-        fact_expedition
-       /         |         \
-      /          |          \
+        fact_expedition <------ fact_suivi_evenement
+       /         |         \        (un événement de suivi
+      /          |          \         par ligne)
 dim_date                dim_statut
 ```
 
-La table de faits a pour grain **une ligne par expédition** (`expedition_id` en dimension dégénérée). Les mesures sont le poids, le volume et les délais prévu et réel.
+Grains :
+
+- `fact_expedition` : une ligne par expédition (`expedition_id` en dimension dégénérée). Mesures : poids, volume, délais prévu et réel.
+- `fact_suivi_evenement` : une ligne par événement de suivi reçu de l'API (`evenement_id` en dimension dégénérée).
+
+## Compétences mises en œuvre
+
+| Compétence | Où dans le dépôt |
+|---|---|
+| Modélisation dimensionnelle, grain, SCD type 2 | `02_schema_dwh.sql`, `05_scd2_client.sql`, `09_tracking_events.sql` |
+| T-SQL : `MERGE`, CTE, window functions, procédures, transactions | `03` à `12` |
+| SSIS : Data Flow, Lookup, Conditional Split, variables, expressions, paramètres de projet, OnError | `ssis/TransLog_ETL/` |
+| Chargement incrémental, watermark, idempotence | `06_incremental_expeditions.sql`, P4 |
+| Ingestion d'API REST : clé, pagination, backoff, codes de sortie | `api/`, `tests/` |
+| Qualité : rejets, quarantaine, règles en table | `04`, `10`, `11` |
+| Supervision et alerte | `07`, `12`, `12b` |
+| Déploiement SSISDB et SQL Server Agent | `08_agent_job.sql`, `12b_job_verification_sante.sql` |
+| Tests | `tests/` (Pytest), scénarios `06b`, `11b`, `12c` |
 
 ## Contenu du dépôt
 
@@ -64,7 +115,7 @@ data/                    CSV générés (avec anomalies volontaires)
 12c_test_supervision.sql P6 : scénario de test de la supervision
 api/                     P4 : API REST simulée (FastAPI) et script d'ingestion
 tests/                   tests Pytest de l'ingestion API
-ssis/TransLog_ETL/       projet SSIS (package P2_Charge_Staging.dtsx)
+ssis/TransLog_ETL/       projet SSIS (packages P2_Charge_Staging, P3_Incremental, P4_Tracking)
 ```
 
 ## Prérequis
@@ -80,10 +131,11 @@ ssis/TransLog_ETL/       projet SSIS (package P2_Charge_Staging.dtsx)
 3. Dans SSMS, exécuter dans l'ordre : `01`, `02`, `02b`, `03`, `04`, puis `05`, `06` et `07`.
    Les scripts `01` et `02` recréent les tables : à n'utiliser qu'à l'initialisation.
 4. Ouvrir `ssis/TransLog_ETL/TransLog_ETL.slnx` dans Visual Studio, ouvrir `P2_Charge_Staging.dtsx`, puis exécuter (F5).
+5. Pour la suite (P3 à P6), exécuter `08`, puis `09`, `10`, `11`, `12` et `12b`. Chaque étape est détaillée dans sa section ci-dessous, avec son script de test (`06b`, `09b`, `11b`, `12c`).
 
 Connexion utilisée : `localhost`, authentification Windows, base `translog_dw`.
 
-## Résultats attendus
+## Résultats attendus du chargement initial (P2)
 
 | Couche | Contenu |
 |---|---|
