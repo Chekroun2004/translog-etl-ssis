@@ -59,17 +59,81 @@ flowchart LR
     QUA --> SANTE
 ```
 
-Schéma en étoile :
+Schéma en étoile (relations réelles des tables, clés étrangères comprises) :
 
+```mermaid
+erDiagram
+    dim_client ||--o{ fact_expedition : "client_key"
+    dim_entrepot ||--o{ fact_expedition : "entrepot_key"
+    dim_transporteur ||--o{ fact_expedition : "transporteur_key"
+    dim_date ||--o{ fact_expedition : "date_key"
+    dim_statut ||--o{ fact_expedition : "statut_key"
+    fact_expedition ||--o{ fact_suivi_evenement : "expedition_id"
+    dim_statut ||--o{ fact_suivi_evenement : "statut_key"
+    dim_date ||--o{ fact_suivi_evenement : "date_key"
+
+    fact_expedition {
+        int expedition_id PK "dimension degeneree"
+        int client_key FK
+        int entrepot_key FK
+        int transporteur_key FK
+        int date_key FK
+        int statut_key FK
+        decimal poids_kg
+        decimal volume_m3
+        int delai_prevu_jours
+        int delai_reel_jours
+    }
+    fact_suivi_evenement {
+        int evenement_id PK "dimension degeneree"
+        int expedition_id FK
+        int statut_key FK
+        int date_key FK
+        datetime2 horodatage
+    }
+    dim_client {
+        int client_key PK
+        int id_client "cle metier"
+        nvarchar nom
+        nvarchar ville
+        nvarchar adresse
+    }
+    dim_client_scd2 {
+        int client_key PK
+        int id_client "cle metier"
+        nvarchar ville
+        nvarchar adresse
+        date date_debut
+        date date_fin
+        bit est_courant
+    }
+    dim_entrepot {
+        int entrepot_key PK
+        int id_entrepot "cle metier"
+        nvarchar code
+        nvarchar nom
+        nvarchar ville
+    }
+    dim_transporteur {
+        int transporteur_key PK
+        int id_transporteur "cle metier"
+        nvarchar nom
+        nvarchar type
+    }
+    dim_statut {
+        int statut_key PK
+        nvarchar statut
+    }
+    dim_date {
+        int date_key PK "AAAAMMJJ"
+        date date_complete
+        int annee
+        int mois
+        int jour
+    }
 ```
-dim_client  dim_entrepot  dim_transporteur
-      \          |          /
-       \         |         /
-        fact_expedition <------ fact_suivi_evenement
-       /         |         \        (un événement de suivi
-      /          |          \         par ligne)
-dim_date                dim_statut
-```
+
+`dwh.dim_client_scd2` historise les changements de ville et d'adresse, mais n'est pas encore reliée à `fact_expedition` (voir Limites).
 
 Grains :
 
