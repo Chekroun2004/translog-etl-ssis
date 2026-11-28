@@ -53,7 +53,11 @@ BEGIN
          OR ISNULL(t.adresse,'') <> ISNULL(s.adresse,''));
 
     INSERT INTO dwh.dim_client_scd2 (id_client, nom, ville, adresse, date_debut)
-    SELECT s.id_client, s.nom, s.ville, s.adresse, @date_effet
+    SELECT s.id_client, s.nom, s.ville, s.adresse,
+           /* Premiere version d'un client : valide depuis l'origine, pour que les
+              faits anterieurs au premier chargement trouvent aussi leur version. */
+           CASE WHEN EXISTS (SELECT 1 FROM dwh.dim_client_scd2 p WHERE p.id_client = s.id_client)
+                THEN @date_effet ELSE '1900-01-01' END
       FROM #src s
      WHERE NOT EXISTS (SELECT 1 FROM dwh.dim_client_scd2 t
                         WHERE t.id_client = s.id_client

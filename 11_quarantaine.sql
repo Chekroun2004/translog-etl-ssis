@@ -148,6 +148,8 @@ BEGIN
 
     COMMIT;
 
+    EXEC etl.usp_lier_faits_scd2 @afficher = 0;   -- faits retraites -> version SCD2
+
     SELECT 'expeditions' AS flux,
            SUM(CASE WHEN nouveau_motif IS NULL THEN 1 ELSE 0 END)                         AS retraites,
            SUM(CASE WHEN nouveau_motif IS NOT NULL AND nb_essais + 1 <  @max_essais THEN 1 ELSE 0 END) AS encore_en_attente,

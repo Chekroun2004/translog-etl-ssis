@@ -90,6 +90,9 @@ BEGIN
 
     COMMIT;
 
+    /* Rattache les nouveaux faits a la version SCD2 du client valide a leur date. */
+    EXEC etl.usp_lier_faits_scd2 @afficher = 0;
+
     /* Sortie en INT : plus simple a recuperer dans des variables SSIS Int32. */
     SELECT @nb AS lignes_chargees,
            CAST(@wm AS INT) AS ancien_watermark,

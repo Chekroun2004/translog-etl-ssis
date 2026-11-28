@@ -64,6 +64,7 @@ Schéma en étoile (relations réelles des tables, clés étrangères comprises)
 ```mermaid
 erDiagram
     dim_client ||--o{ fact_expedition : "client_key"
+    dim_client_scd2 ||--o{ fact_expedition : "client_scd2_key"
     dim_entrepot ||--o{ fact_expedition : "entrepot_key"
     dim_transporteur ||--o{ fact_expedition : "transporteur_key"
     dim_date ||--o{ fact_expedition : "date_key"
@@ -75,6 +76,7 @@ erDiagram
     fact_expedition {
         int expedition_id PK "dimension degeneree"
         int client_key FK
+        int client_scd2_key FK "version du client a la date"
         int entrepot_key FK
         int transporteur_key FK
         int date_key FK
@@ -133,7 +135,7 @@ erDiagram
     }
 ```
 
-`dwh.dim_client_scd2` historise les changements de ville et d'adresse (`date_debut`, `date_fin`, `est_courant`).
+`dwh.dim_client_scd2` historise les changements de ville et d'adresse (`date_debut`, `date_fin`, `est_courant`). Chaque expédition pointe à la fois vers `dim_client` (`client_key`, valeurs actuelles) et vers la version du client valide à la date de l'expédition (`client_scd2_key`).
 
 Grains :
 
@@ -177,6 +179,7 @@ data/                    CSV générés (avec anomalies volontaires)
 12_supervision.sql       P6 : supervision (santé des flux, tableau de santé, alertes)
 12b_job_verification_sante.sql  P6 : job SQL Server Agent de vérification (07h00)
 12c_test_supervision.sql P6 : scénario de test de la supervision
+13_lien_faits_scd2.sql   liaison de fact_expedition à la version SCD2 du client
 api/                     P4 : API REST simulée (FastAPI) et script d'ingestion
 tests/                   tests Pytest de l'ingestion API
 ssis/TransLog_ETL/       projet SSIS (packages P2_Charge_Staging, P3_Incremental, P4_Tracking)
@@ -195,7 +198,7 @@ ssis/TransLog_ETL/       projet SSIS (packages P2_Charge_Staging, P3_Incremental
 3. Dans SSMS, exécuter dans l'ordre : `01`, `02`, `02b`, `03`, `04`, puis `05`, `06` et `07`.
    Les scripts `01` et `02` recréent les tables : à n'utiliser qu'à l'initialisation.
 4. Ouvrir `ssis/TransLog_ETL/TransLog_ETL.slnx` dans Visual Studio, ouvrir `P2_Charge_Staging.dtsx`, puis exécuter (F5).
-5. Pour la suite (P3 à P6), exécuter `08`, puis `09`, `10`, `11`, `12` et `12b`. Chaque étape est détaillée dans sa section ci-dessous, avec son script de test (`06b`, `09b`, `11b`, `12c`).
+5. Pour la suite (P3 à P6), exécuter `08`, puis `09`, `10`, `11`, `12`, `12b` et `13`. Chaque étape est détaillée dans sa section ci-dessous, avec son script de test (`06b`, `09b`, `11b`, `12c`).
 
 Connexion utilisée : `localhost`, authentification Windows, base `translog_dw`.
 
@@ -237,6 +240,20 @@ Script : `05_scd2_client.sql`. La ville et l'adresse sont historisées.
   2. création d'une version courante pour tout client qui n'en a pas (nouveau client ou version fermée).
 - Rejouable : une relance sans changement dans le staging n'écrit rien (61 lignes avant et après).
 - Les périodes sont fermées aux deux bornes (`date_fin` = veille du changement) : une date tombe dans une seule version, la recherche à une date donnée utilise donc `BETWEEN date_debut AND date_fin`.
+
+### Liaison des faits à l'historique (`13_lien_faits_scd2.sql`)
+
+`fact_expedition.client_scd2_key` pointe vers la version du client valide à la date de l'expédition :
+
+```sql
+JOIN dwh.dim_client_scd2 v
+  ON v.id_client = c.id_client
+ AND d.date_complete BETWEEN v.date_debut AND v.date_fin
+```
+
+- La première version de chaque client est valide depuis `1900-01-01`, pour que les expéditions antérieures au premier chargement trouvent aussi leur version.
+- `etl.usp_lier_faits_scd2` est rejouable (ne modifie que les faits sans version ou mal liés). Elle est appelée à la fin du chargement incrémental et du retraitement de la quarantaine.
+- Résultat : 3000 expéditions liées, 0 sans version. Le client 7, qui a déménagé d'Oujda à Fès le 15 juin 2026, a 35 expéditions rattachées à sa version d'Oujda et 31 à sa version de Fès ; `dim_client` (type 1) les attribue toutes à Fès.
 
 ## Chargement incrémental de la table de faits (watermark)
 
